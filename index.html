@@ -35,7 +35,7 @@ input,select{width:100%;padding:10px;border:1px solid var(--br);border-radius:8p
 .tab{display:none}.tab.on{display:block}
 .lbl{text-align:center;padding:8px;border:1px dashed var(--br);border-radius:8px;background:#fff!important;color:#000!important;color-scheme:light;forced-color-adjust:none;-webkit-print-color-adjust:exact;print-color-adjust:exact}
 .lbl svg{max-width:100%;background:#fff;forced-color-adjust:none}
-@media print{:root{color-scheme:light}body{background:#fff!important;color:#000!important}body *{visibility:hidden}.printarea,.printarea *{visibility:visible}.printarea{position:absolute;left:0;top:0;width:100%}}
+@media print{#modal.on{position:static!important;background:none!important;display:block!important}#sheet{max-height:none!important;overflow:visible!important;box-shadow:none!important;border-radius:0!important;background:#fff!important;color:#000!important}.noprint{display:none!important}table.h{width:100%;border-collapse:collapse}table.h td,table.h th{border:1px solid #999;padding:4px 6px;text-align:left;font-size:12px}:root{color-scheme:light}body{background:#fff!important;color:#000!important}body *{visibility:hidden}.printarea,.printarea *{visibility:visible}.printarea{position:absolute;left:0;top:0;width:100%}}
 </style></head><body>
 <header>Hospital Asset Scanner<small id="mode"></small></header>
 <main>
@@ -135,16 +135,37 @@ function show(tag){
   <div class="item"><span>Serial no.</span><b>${esc(a.sn)||'—'}</b></div>
   <div class="item"><span>Cost</span><b>${a.cost?'₱'+Number(a.cost).toLocaleString():'—'}</b></div>
   <div class="item"><span>Condition</span><b>${esc(a.cond)}</b></div>
+  <div style="margin-top:10px"><b>PMS history</b>${histHTML(a)}</div>
   <div class="lbl" style="margin-top:8px"><svg id="bc"></svg></div>
-  <button class="btn" id="donePms">Mark PMS done today</button>
+  <button class="btn" id="donePms">Record PMS done</button>
+  <button class="btn s" id="repBtn">Full asset report (print / PDF)</button>
   <div class="row"><button class="btn s" id="edBtn">Edit</button><button class="btn s" id="delBtn">Delete</button></div>
   <button class="btn s" onclick="closeM()">Close</button>`;
   barcode(a.tag,$('#bc'));
-  $('#donePms').onclick=()=>{a.lastPms=new Date().toISOString().slice(0,10);persist(a);show(a.tag)};
+  $('#donePms').onclick=()=>pmsForm(a);
+  $('#repBtn').onclick=()=>assetReport(a);
   $('#edBtn').onclick=()=>{closeM();edit(a)};
   $('#delBtn').onclick=()=>{if(confirm('Delete '+a.tag+'?')){remove(a.tag);closeM()}};}
  $('#modal').classList.add('on');
 }
+function hist(a){const h=(a.history||[]).slice();if(a.lastPms&&!h.some(x=>x.date===a.lastPms))h.push({date:a.lastPms,by:'',notes:'Last PMS on record',cost:''});return h.sort((x,y)=>y.date.localeCompare(x.date))}
+function histHTML(a){const h=hist(a);if(!h.length)return'<div class="mu">No PMS recorded yet.</div>';return h.map(x=>`<div class="item"><div><b>${fmt(x.date)}</b><div class="mu">${esc(x.by)||'—'}${x.notes?' · '+esc(x.notes):''}</div></div><b>${x.cost?'₱'+Number(x.cost).toLocaleString():''}</b></div>`).join('')}
+function pmsForm(a){const sh=$('#sheet');
+ sh.innerHTML=`<h3>Record PMS · ${esc(a.name)}</h3><label>PMS date</label><input type="date" id="p_d" value="${new Date().toISOString().slice(0,10)}"><label>Done by (technician / company)</label><input id="p_b"><label>Notes / findings</label><input id="p_n" placeholder="e.g. cleaned, replaced fan"><label>Cost (₱)</label><input type="number" id="p_c" inputmode="decimal"><button class="btn" id="p_s">Save PMS record</button><button class="btn s" id="p_x">Cancel</button>`;
+ $('#p_x').onclick=()=>show(a.tag);
+ $('#p_s').onclick=async()=>{const d=$('#p_d').value;if(!d)return alert('Choose the PMS date.');
+  const h=(a.history||[]).slice();if(a.lastPms&&!h.some(x=>x.date===a.lastPms))h.push({date:a.lastPms,by:'',notes:'Last PMS on record',cost:''});
+  h.push({date:d,by:$('#p_b').value.trim(),notes:$('#p_n').value.trim(),cost:$('#p_c').value});
+  a.history=h;if(!a.lastPms||d>a.lastPms)a.lastPms=d;await persist(a);show(a.tag)}}
+function assetReport(a){const p=pms(a),h=hist(a);const sh=$('#sheet');
+ const row=(k,v)=>`<tr><th style="width:38%">${k}</th><td>${v}</td></tr>`;
+ sh.innerHTML=`<div class="noprint row"><button class="btn" onclick="window.print()">Print / Save as PDF</button><button class="btn s" id="rb">Back</button></div>
+ <div class="printarea" style="color:#000;background:#fff;padding:8px"><h2 style="margin:0">Asset Report</h2><div style="font-size:12px;margin-bottom:8px">Generated ${fmt(new Date().toISOString().slice(0,10))}</div>
+ <div class="lbl" style="border:0"><svg id="rbc"></svg></div>
+ <table class="h" style="width:100%;border-collapse:collapse;margin-top:8px">${row('Asset tag',esc(a.tag))}${row('Asset name',esc(a.name))}${row('Category',esc(a.cat))}${row('Location',esc(a.loc)||'—')}${row('Brand / model',esc(a.model)||'—')}${row('Serial no.',esc(a.sn)||'—')}${row('Date purchased',fmt(a.bought))}${row('Age',age(a.bought)||'—')}${row('Cost',a.cost?'₱'+Number(a.cost).toLocaleString():'—')}${row('Condition',esc(a.cond))}${row('PMS interval',a.interval?'Every '+a.interval+' month(s)':'No PMS required')}${row('Last PMS',fmt(a.lastPms))}${row('Next PMS',p.due?fmt(p.due):'—')}${row('PMS status',p.t)}</table>
+ <h3 style="margin:14px 0 4px">PMS history</h3>${h.length?`<table class="h" style="width:100%;border-collapse:collapse"><tr><th>Date</th><th>Done by</th><th>Notes</th><th>Cost</th></tr>${h.map(x=>`<tr><td>${fmt(x.date)}</td><td>${esc(x.by)}</td><td>${esc(x.notes)}</td><td>${x.cost?'₱'+Number(x.cost).toLocaleString():''}</td></tr>`).join('')}</table>`:'<div>No PMS recorded yet.</div>'}</div>`;
+ sh.querySelectorAll('table.h th,table.h td').forEach(c=>{c.style.border='1px solid #999';c.style.padding='4px 6px';c.style.textAlign='left';c.style.fontSize='13px'});
+ barcode(a.tag,$('#rbc'));$('#rb').onclick=()=>show(a.tag)}
 function closeM(){$('#modal').classList.remove('on')}
 $('#modal').onclick=e=>{if(e.target.id=='modal')closeM()};
 function go(t){document.querySelectorAll('.tab').forEach(x=>x.classList.toggle('on',x.id=='t-'+t));document.querySelectorAll('nav button').forEach(b=>b.classList.toggle('on',b.dataset.t==t));
@@ -172,7 +193,7 @@ $('#saveBtn').onclick=async()=>{
  if(!tag||!name)return alert('Asset tag and name are required.');
  if(!bought&&!confirm('No purchase date entered. Save anyway?'))return;
  if(!editing&&assets.some(x=>x.tag===tag))return alert('That tag already exists.');
- const a={tag,name,cat:$('#f_cat').value,loc:$('#f_loc').value.trim(),model:$('#f_model').value.trim(),sn:$('#f_sn').value.trim(),bought,cost:$('#f_cost').value,interval:parseInt($('#f_int').value)||0,lastPms:$('#f_last').value,cond:$('#f_cond').value,created:new Date().toISOString()};
+ const a={tag,name,cat:$('#f_cat').value,loc:$('#f_loc').value.trim(),model:$('#f_model').value.trim(),sn:$('#f_sn').value.trim(),bought,cost:$('#f_cost').value,interval:parseInt($('#f_int').value)||0,lastPms:$('#f_last').value,cond:$('#f_cond').value,history:((editing&&assets.find(x=>x.tag===editing))||{}).history||[],created:new Date().toISOString()};
  await persist(a);resetForm();go('scan');show(tag);
 };
 function render(){
@@ -210,7 +231,7 @@ function needX(){if(typeof XLSX==='undefined'){alert('The Excel part did not loa
 function xlsxBlob(sheets){const wb=XLSX.utils.book_new();sheets.forEach(([n,aoa])=>{const ws=XLSX.utils.aoa_to_sheet(aoa);ws['!cols']=aoa[0].map(h=>({wch:Math.max(14,String(h).length+2)}));XLSX.utils.book_append_sheet(wb,ws,n)});return new Blob([XLSX.write(wb,{bookType:'xlsx',type:'array'})],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'})}
 function exportRows(){return assets.slice().sort((a,b)=>a.tag.localeCompare(b.tag)).map(a=>{const p=pms(a);return[a.tag,a.name,a.cat,a.loc,a.model,a.sn,a.bought,a.cost===''||a.cost==null?'':(Number(a.cost)||''),a.cond,parseInt(a.interval)||0,a.lastPms||'',age(a.bought),p.due||'',p.t]})}
 const stamp=()=>new Date().toISOString().slice(0,10);
-$('#xlsxBtn').onclick=()=>{if(!needX())return;dl('hospital-assets-'+stamp()+'.xlsx',xlsxBlob([['Assets',[HDR2,...exportRows()]]]))};
+$('#xlsxBtn').onclick=()=>{if(!needX())return;dl('hospital-assets-'+stamp()+'.xlsx',xlsxBlob([['Assets',[HDR2,...exportRows()]],['PMS History',[['Tag','Asset','PMS Date','Done By','Notes','Cost'],...assets.flatMap(a=>hist(a).map(h=>[a.tag,a.name,h.date,h.by||'',h.notes||'',h.cost===''||h.cost==null?'':Number(h.cost)||'']))]]]))};
 $('#csvBtn').onclick=()=>{const csv=[HDR2,...exportRows()].map(r=>r.map(v=>'"'+String(v==null?'':v).replace(/"/g,'""')+'"').join(',')).join('\n');dl('hospital-assets-'+stamp()+'.csv',new Blob(['\ufeff'+csv],{type:'text/csv'}))};
 $('#tplBtn').onclick=()=>{if(!needX())return;dl('asset-import-template.xlsx',xlsxBlob([['Assets',[HDR]],['Example (not imported)',[HDR,['','Patient monitor','Medical equipment','ICU','Philips MX450','SN12345','2022-06-01',85000,'Good',12,'2025-06-01']]],['Notes',[['How to fill in'],['Name is required. Everything else is optional.'],['Tag: leave blank to get an automatic HSP number. If the tag already exists the asset is updated.'],['Date Purchased and Last PMS Date: use YYYY-MM-DD or a normal Excel date.'],['PMS Interval (months): 0 or blank = no PMS. 12 = yearly, 3 = every quarter.'],['Condition: Good, Fair, Needs repair or Condemned.'],['Put your assets in the first sheet named Assets. Only the first sheet is imported.']]]])) };
 $('#impBtn').onclick=()=>$('#impIn').click();
