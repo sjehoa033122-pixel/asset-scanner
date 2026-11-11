@@ -43,8 +43,6 @@ input,select{width:100%;padding:10px;border:1px solid var(--br);border-radius:8p
  <div class="card"><div id="reader"></div>
   <button class="btn" id="startBtn">Start camera scan</button>
   <button class="btn s" id="photoBtn">Scan by photo (opens camera app)</button><input type="file" id="photoIn" accept="image/*" capture="environment" hidden>
-  <button class="btn s" id="photoBtn">Scan by photo (opens camera app)</button>
-  <input type="file" id="photoIn" accept="image/*" capture="environment" style="display:none">
   <label>Or type / use a hardware scanner</label>
   <div class="row"><input id="manual" placeholder="Asset tag e.g. HSP-0001" autocapitalize="characters"><button class="btn s" style="width:90px;margin:0" id="goBtn">Find</button></div>
   <div class="mu" id="camMsg" style="margin-top:6px"></div></div>
@@ -159,14 +157,6 @@ $('#startBtn').onclick=async()=>{
   await scanner.start({facingMode:'environment'},{fps:15,qrbox:(w,h)=>({width:Math.floor(Math.min(w*0.92,420)),height:Math.floor(Math.min(h*0.6,160))})},txt=>{stopScan();show(txt.trim())},()=>{});
   $('#startBtn').textContent='Stop camera';$('#camMsg').textContent='';
  }catch(e){scanner=null;$('#camMsg').textContent='Live camera is blocked here. Use Scan by photo, or type the tag.'}
-};
-$('#photoBtn').onclick=()=>$('#photoIn').click();
-$('#photoIn').onchange=async e=>{
- const f=e.target.files[0];if(!f)return;
- $('#camMsg').textContent='Reading barcode…';
- try{await stopScan();const h=new Html5Qrcode('reader');const t=await h.scanFile(f,false);try{h.clear()}catch(x){}$('#camMsg').textContent='';show(t)}
- catch(x){$('#camMsg').textContent='Could not read a barcode in that photo. Get closer, keep it flat and in focus, and try again.'}
- e.target.value='';
 };
 $('#photoBtn').onclick=()=>$('#photoIn').click();
 $('#photoIn').onchange=async e=>{const f=e.target.files[0];e.target.value='';if(!f)return;await stopScan();try{const h=new Html5Qrcode('reader',SCFG);const t=await h.scanFile(f,false);try{h.clear()}catch(x){}show(t.trim())}catch(x){$('#camMsg').textContent='No barcode found in that photo. Move closer, keep the label flat and well lit, then try again.'}};
