@@ -1,4 +1,4 @@
-const C='assetscan-v1',F=['./','index.html','manifest.json','lib/html5-qrcode.min.js','lib/JsBarcode.all.min.js','icons/icon-192.png','icons/icon-512.png'];
+const C='assetscan-v2',F=['./','index.html','manifest.json','html5-qrcode.min.js','JsBarcode.all.min.js','icon-192.png','icon-512.png'];
 self.addEventListener('install',e=>{e.waitUntil(caches.open(C).then(c=>c.addAll(F)));self.skipWaiting()});
 self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(k=>Promise.all(k.filter(x=>x!==C).map(x=>caches.delete(x)))));self.clients.claim()});
 self.addEventListener('fetch',e=>{e.respondWith(caches.match(e.request).then(r=>r||fetch(e.request)))});
