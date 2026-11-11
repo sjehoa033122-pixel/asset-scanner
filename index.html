@@ -1,10 +1,12 @@
 <!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
 <title>Hospital Asset Scanner</title>
 <link rel="manifest" href="manifest.json"><meta name="theme-color" content="#0b6bcb"><link rel="icon" href="icon-192.png"><link rel="apple-touch-icon" href="icon-192.png">
 <script src="html5-qrcode.min.js"></script>
 <script src="JsBarcode.all.min.js"></script>
+<script src="xlsx.mini.min.js"></script>
 <style>
 :root{--bg:#f5f7fa;--card:#fff;--tx:#1b2430;--mu:#66717f;--br:#dde3ea;--pr:#0b6bcb;--ok:#1a8f4c;--wn:#c77700;--bad:#c62828;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#12171d;--card:#1b232c;--tx:#e8edf2;--mu:#98a4b1;--br:#2d3844;--pr:#4aa3ff;--ok:#43c47a;--wn:#f0a73a;--bad:#ff6b6b}}
@@ -31,15 +33,16 @@ input,select{width:100%;padding:10px;border:1px solid var(--br);border-radius:8p
 #modal.on{display:flex}#sheet{background:var(--card);width:100%;max-width:560px;border-radius:16px 16px 0 0;padding:16px 16px calc(16px + env(safe-area-inset-bottom,0px));max-height:90vh;overflow:auto}
 #reader{width:100%;border-radius:10px;overflow:hidden}
 .tab{display:none}.tab.on{display:block}
-.lbl{text-align:center;padding:8px;border:1px dashed var(--br);border-radius:8px;background:#fff;color:#000}
-.lbl svg{max-width:100%}
-@media print{body *{visibility:hidden}.printarea,.printarea *{visibility:visible}.printarea{position:absolute;left:0;top:0;width:100%}}
+.lbl{text-align:center;padding:8px;border:1px dashed var(--br);border-radius:8px;background:#fff!important;color:#000!important;color-scheme:light;forced-color-adjust:none;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+.lbl svg{max-width:100%;background:#fff;forced-color-adjust:none}
+@media print{:root{color-scheme:light}body{background:#fff!important;color:#000!important}body *{visibility:hidden}.printarea,.printarea *{visibility:visible}.printarea{position:absolute;left:0;top:0;width:100%}}
 </style></head><body>
 <header>Hospital Asset Scanner<small id="mode"></small></header>
 <main>
 <section id="t-scan" class="tab on">
  <div class="card"><div id="reader"></div>
   <button class="btn" id="startBtn">Start camera scan</button>
+  <button class="btn s" id="photoBtn">Scan by photo (opens camera app)</button><input type="file" id="photoIn" accept="image/*" capture="environment" hidden>
   <button class="btn s" id="photoBtn">Scan by photo (opens camera app)</button>
   <input type="file" id="photoIn" accept="image/*" capture="environment" style="display:none">
   <label>Or type / use a hardware scanner</label>
@@ -66,7 +69,12 @@ input,select{width:100%;padding:10px;border:1px solid var(--br);border-radius:8p
 <section id="t-rep" class="tab">
  <div class="card"><div class="stats" id="stats"></div></div>
  <div class="card"><b>PMS due / overdue</b><div id="pmsList"></div></div>
- <button class="btn" id="csvBtn">Export CSV report</button>
+ <div class="card"><b>Import / Export</b><div class="mu">Keep your inventory in Excel. Download the template, fill it in, then import it. Rows with an existing tag are updated; blank tags get a new HSP number.</div>
+ <button class="btn" id="impBtn">Import from Excel / CSV</button><input type="file" id="impIn" accept=".xlsx,.xls,.csv" hidden>
+ <button class="btn s" id="tplBtn">Download blank Excel template</button>
+ <button class="btn s" id="xlsxBtn">Export inventory to Excel (.xlsx)</button>
+ <button class="btn s" id="csvBtn">Export inventory to CSV</button>
+ <div class="mu" id="impMsg" style="margin-top:6px"></div></div>
  <button class="btn s" id="prtBtn">Print all barcode labels</button>
  <div class="printarea" id="labels" style="margin-top:12px"></div>
 </section>
@@ -75,6 +83,7 @@ input,select{width:100%;padding:10px;border:1px solid var(--br);border-radius:8p
 <div id="modal"><div id="sheet"></div></div>
 <script>
 let assets=[],coll=null,scanner=null,editing=null;
+const SCFG={formatsToSupport:[Html5QrcodeSupportedFormats.CODE_128,Html5QrcodeSupportedFormats.QR_CODE],experimentalFeatures:{useBarCodeDetectorIfSupported:true},verbose:false};
 const $=s=>document.querySelector(s);
 const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const fmt=d=>d?new Date(d+'T00:00:00').toLocaleDateString('en-PH',{year:'numeric',month:'short',day:'numeric'}):'—';
@@ -109,8 +118,9 @@ function pms(a){
  return{k:'ok',t:'PMS up to date',due,days};
 }
 function age(b){if(!b)return'';const m=Math.floor((Date.now()-new Date(b))/2629800000);return m>=12?Math.floor(m/12)+' yr '+(m%12)+' mo':m+' mo'}
-function nextTag(){const nums=assets.map(a=>parseInt((a.tag.match(/(\d+)$/)||[0,0])[1])).filter(n=>!isNaN(n));return 'HSP-'+String((nums.length?Math.max(...nums):0)+1).padStart(4,'0')}
-function barcode(tag,el){try{JsBarcode(el,tag,{format:'CODE128',height:60,fontSize:14,margin:4})}catch(e){}}
+function maxN(list){let m=0;list.forEach(t=>{const x=String(t).match(/^HSP-(\d+)$/i);if(x)m=Math.max(m,parseInt(x[1]))});return m}
+function nextTag(){return 'HSP-'+String(maxN(assets.map(a=>a.tag))+1).padStart(4,'0')}
+function barcode(tag,el){try{JsBarcode(el,tag,{format:'CODE128',width:2.5,height:80,fontSize:16,margin:14,background:'#ffffff',lineColor:'#000000',displayValue:true});el.style.background='#fff'}catch(e){}}
 function show(tag){
  const a=assets.find(x=>x.tag.toLowerCase()===String(tag).trim().toLowerCase());
  const sh=$('#sheet');
@@ -145,8 +155,8 @@ document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>go(b.dataset.t)
 async function stopScan(){if(scanner){try{await scanner.stop();scanner.clear()}catch(e){}scanner=null;$('#startBtn').textContent='Start camera scan'}}
 $('#startBtn').onclick=async()=>{
  if(scanner)return stopScan();
- try{scanner=new Html5Qrcode('reader');
-  await scanner.start({facingMode:'environment'},{fps:10,qrbox:{width:260,height:140}},txt=>{stopScan();show(txt)},()=>{});
+ try{scanner=new Html5Qrcode('reader',SCFG);
+  await scanner.start({facingMode:'environment'},{fps:15,qrbox:(w,h)=>({width:Math.floor(Math.min(w*0.92,420)),height:Math.floor(Math.min(h*0.6,160))})},txt=>{stopScan();show(txt.trim())},()=>{});
   $('#startBtn').textContent='Stop camera';$('#camMsg').textContent='';
  }catch(e){scanner=null;$('#camMsg').textContent='Live camera is blocked here. Use Scan by photo, or type the tag.'}
 };
@@ -158,11 +168,13 @@ $('#photoIn').onchange=async e=>{
  catch(x){$('#camMsg').textContent='Could not read a barcode in that photo. Get closer, keep it flat and in focus, and try again.'}
  e.target.value='';
 };
+$('#photoBtn').onclick=()=>$('#photoIn').click();
+$('#photoIn').onchange=async e=>{const f=e.target.files[0];e.target.value='';if(!f)return;await stopScan();try{const h=new Html5Qrcode('reader',SCFG);const t=await h.scanFile(f,false);try{h.clear()}catch(x){}show(t.trim())}catch(x){$('#camMsg').textContent='No barcode found in that photo. Move closer, keep the label flat and well lit, then try again.'}};
 $('#goBtn').onclick=()=>{const v=$('#manual').value.trim();if(v){show(v);$('#manual').value=''}};
 $('#manual').onkeydown=e=>{if(e.key=='Enter')$('#goBtn').click()};
 const ids=['tag','name','cat','loc','model','sn','buy','cost','int','last','cond'];
 function resetForm(){editing=null;ids.forEach(i=>$('#f_'+i).value='');$('#f_int').value=0;$('#f_cat').selectedIndex=0;$('#f_cond').selectedIndex=0;$('#formTitle').textContent='New asset';$('#f_tag').value=nextTag()}
-function edit(a){editing=a.tag;$('#formTitle').textContent='Edit '+a.tag;
+function edit(a){editing=a.tag;if(a.cat&&![...$('#f_cat').options].some(o=>o.value===a.cat)){const o=document.createElement('option');o.textContent=a.cat;$('#f_cat').appendChild(o)}$('#formTitle').textContent='Edit '+a.tag;
  Object.entries({tag:a.tag,name:a.name,cat:a.cat,loc:a.loc,model:a.model,sn:a.sn,buy:a.bought,cost:a.cost,int:a.interval,last:a.lastPms,cond:a.cond}).forEach(([k,v])=>$('#f_'+k).value=v||'');go('add')}
 $('#clearBtn').onclick=resetForm;
 $('#saveBtn').onclick=async()=>{
@@ -186,13 +198,59 @@ function render(){
 }
 $('#q').oninput=render;
 $('#prtBtn').onclick=()=>window.print();
-$('#csvBtn').onclick=async()=>{
- const h=['Tag','Name','Category','Location','Brand/Model','Serial','Date Purchased','Age','Cost','Condition','PMS Interval (mo)','Last PMS','Next PMS','PMS Status'];
- const rows=assets.map(a=>{const p=pms(a);return[a.tag,a.name,a.cat,a.loc,a.model,a.sn,a.bought,age(a.bought),a.cost,a.cond,a.interval,a.lastPms,p.due||'',p.t]});
- const csv=[h,...rows].map(r=>r.map(v=>'"'+String(v==null?'':v).replace(/"/g,'""')+'"').join(',')).join('\n');
- try{const d=await claude.use('downloads');if(d){await d.save({filename:'asset-report.csv',data:csv});return}}catch(e){}
- try{const b=new Blob([csv],{type:'text/csv'});const u=URL.createObjectURL(b);const x=document.createElement('a');x.href=u;x.download='asset-report.csv';x.click()}catch(e){alert('Download unavailable here.')}
-};
+const HDR=['Tag','Name','Category','Location','Brand/Model','Serial No','Date Purchased','Cost','Condition','PMS Interval (months)','Last PMS Date'];
+const HDR2=[...HDR,'Age','Next PMS Date','PMS Status'];
+const CATS=['Medical equipment','Biomedical / lab','Furniture','IT equipment','Building / utility','Vehicle','Other'];
+const K={tag:['tag','assettag','assetno','assetnumber','propertyno','propertynumber','propertytag','code','barcode'],name:['name','assetname','description','item','itemname','equipment'],cat:['category','type','class'],loc:['location','department','dept','area','room','departmentlocation'],bm:['brandmodel'],brand:['brand'],model:['model'],sn:['serialno','serial','serialnumber','sn'],bought:['datepurchased','purchasedate','dateacquired','acquisitiondate','dateofpurchase','purchased'],cost:['cost','price','amount','acquisitioncost','unitcost'],cond:['condition','status'],interval:['pmsintervalmonths','pmsinterval','pmsevery','pmsmonths','pms'],last:['lastpmsdate','lastpms','lastmaintenance','lastpmsdone']};
+const nk=s=>String(s).toLowerCase().replace(/[^a-z0-9]/g,'');
+const pick=(r,k)=>{for(const x of k){if(r[x]!==undefined&&String(r[x]).trim()!=='')return r[x]}return''};
+function toDate(v){
+ if(v===''||v==null)return'';
+ if(v instanceof Date)return isNaN(v)?'':new Date(v.getTime()+432e5).toISOString().slice(0,10);
+ if(typeof v==='number')return(v>20000&&v<80000)?new Date(Math.round((v-25569)*864e5)).toISOString().slice(0,10):'';
+ const t=String(v).trim();let m=t.match(/^(\d{4})[-\/.](\d{1,2})[-\/.](\d{1,2})/);
+ if(m)return m[1]+'-'+m[2].padStart(2,'0')+'-'+m[3].padStart(2,'0');
+ m=t.match(/^(\d{1,2})[-\/.](\d{1,2})[-\/.](\d{2,4})$/);
+ if(m){let y=+m[3];if(y<100)y+=2000;let a=+m[1],b=+m[2];if(a>12){const z=a;a=b;b=z}return y+'-'+String(a).padStart(2,'0')+'-'+String(b).padStart(2,'0')}
+ const d=new Date(t);return isNaN(d)?'':new Date(d.getTime()+432e5).toISOString().slice(0,10);
+}
+function toInt(v){const t=String(v).toLowerCase().trim();if(!t)return 0;if(/year|annual/.test(t)){const n=parseInt(t);return n?n*12:12}if(/quarter/.test(t))return 3;if(/semi|half/.test(t))return 6;if(/month|^\d/.test(t))return parseInt(t)||0;return 0}
+function dl(name,blob){const u=URL.createObjectURL(blob);const x=document.createElement('a');x.href=u;x.download=name;document.body.appendChild(x);x.click();setTimeout(()=>{x.remove();URL.revokeObjectURL(u)},1500)}
+function needX(){if(typeof XLSX==='undefined'){alert('The Excel part did not load. Connect to the internet, close and reopen the app, then try again. CSV export still works.');return false}return true}
+function xlsxBlob(sheets){const wb=XLSX.utils.book_new();sheets.forEach(([n,aoa])=>{const ws=XLSX.utils.aoa_to_sheet(aoa);ws['!cols']=aoa[0].map(h=>({wch:Math.max(14,String(h).length+2)}));XLSX.utils.book_append_sheet(wb,ws,n)});return new Blob([XLSX.write(wb,{bookType:'xlsx',type:'array'})],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'})}
+function exportRows(){return assets.slice().sort((a,b)=>a.tag.localeCompare(b.tag)).map(a=>{const p=pms(a);return[a.tag,a.name,a.cat,a.loc,a.model,a.sn,a.bought,a.cost===''||a.cost==null?'':(Number(a.cost)||''),a.cond,parseInt(a.interval)||0,a.lastPms||'',age(a.bought),p.due||'',p.t]})}
+const stamp=()=>new Date().toISOString().slice(0,10);
+$('#xlsxBtn').onclick=()=>{if(!needX())return;dl('hospital-assets-'+stamp()+'.xlsx',xlsxBlob([['Assets',[HDR2,...exportRows()]]]))};
+$('#csvBtn').onclick=()=>{const csv=[HDR2,...exportRows()].map(r=>r.map(v=>'"'+String(v==null?'':v).replace(/"/g,'""')+'"').join(',')).join('\n');dl('hospital-assets-'+stamp()+'.csv',new Blob(['\ufeff'+csv],{type:'text/csv'}))};
+$('#tplBtn').onclick=()=>{if(!needX())return;dl('asset-import-template.xlsx',xlsxBlob([['Assets',[HDR]],['Example (not imported)',[HDR,['','Patient monitor','Medical equipment','ICU','Philips MX450','SN12345','2022-06-01',85000,'Good',12,'2025-06-01']]],['Notes',[['How to fill in'],['Name is required. Everything else is optional.'],['Tag: leave blank to get an automatic HSP number. If the tag already exists the asset is updated.'],['Date Purchased and Last PMS Date: use YYYY-MM-DD or a normal Excel date.'],['PMS Interval (months): 0 or blank = no PMS. 12 = yearly, 3 = every quarter.'],['Condition: Good, Fair, Needs repair or Condemned.'],['Put your assets in the first sheet named Assets. Only the first sheet is imported.']]]])) };
+$('#impBtn').onclick=()=>$('#impIn').click();
+$('#impIn').onchange=async e=>{const f=e.target.files[0];e.target.value='';if(f)await doImport(f)};
+async function doImport(file){
+ if(!needX())return;const msg=$('#impMsg');
+ let rows;
+ try{const wb=XLSX.read(await file.arrayBuffer(),{type:'array',cellDates:true});rows=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{defval:''})}catch(x){msg.textContent='Could not read that file. Save it as .xlsx or .csv and try again.';return}
+ const map=new Map();let skipped=0;
+ rows.forEach(raw=>{const r={};Object.keys(raw).forEach(k=>r[nk(k)]=raw[k]);
+  const name=String(pick(r,K.name)).trim();if(!name){skipped++;return}
+  const bm=[pick(r,K.bm),pick(r,K.brand),pick(r,K.model)].map(x=>String(x).trim()).filter(Boolean);
+  const catRaw=String(pick(r,K.cat)).trim();const cat=CATS.find(c=>c.toLowerCase()===catRaw.toLowerCase())||catRaw;
+  const cd=String(pick(r,K.cond)).toLowerCase();const cond=/condemn/.test(cd)?'Condemned':/repair|broken|defect/.test(cd)?'Needs repair':/fair/.test(cd)?'Fair':'Good';
+  const o={tag:String(pick(r,K.tag)).trim().toUpperCase().replace(/\s+/g,''),name,cat:cat||'Other',loc:String(pick(r,K.loc)).trim(),model:[...new Set(bm)].join(' '),sn:String(pick(r,K.sn)).trim(),bought:toDate(pick(r,K.bought)),cost:String(pick(r,K.cost)).replace(/[^0-9.]/g,''),cond,interval:toInt(pick(r,K.interval)),lastPms:toDate(pick(r,K.last))};
+  map.set(o.tag||('_'+map.size),o)});
+ let n=maxN([...assets.map(a=>a.tag),...[...map.keys()]]);
+ const out=[];let added=0,updated=0;
+ map.forEach(o=>{const ex=o.tag&&assets.find(a=>a.tag===o.tag);
+  if(ex){const m={...ex};Object.entries(o).forEach(([k,v])=>{if(v!==''&&v!==0)m[k]=v;else if(k==='interval'&&String(o.interval)==='0'&&false)m[k]=v});out.push(m);updated++}
+  else{if(!o.tag)o.tag='HSP-'+String(++n).padStart(4,'0');o.created=new Date().toISOString();out.push(o);added++}});
+ if(!out.length){msg.textContent='No assets found. Make sure the first row has headings like Name, Location and Date Purchased, and every asset has a Name.';return}
+ if(!confirm('Import '+out.length+' asset(s)?\n'+added+' new, '+updated+' updated'+(skipped?', '+skipped+' skipped (no name)':'')+'.'))return;
+ await persistMany(out);
+ msg.textContent='Imported '+added+' new and updated '+updated+(skipped?'; skipped '+skipped+' row(s) with no name.':'.');go('assets');
+}
+async function persistMany(list){
+ list.forEach(a=>{const i=assets.findIndex(x=>x.tag===a.tag);if(i>=0)assets[i]=a;else assets.push(a)});
+ if(coll){try{await Promise.all(list.map(a=>coll.doc(a.tag).set(a)))}catch(e){lsSave()}}else lsSave();render();
+}
 if('serviceWorker' in navigator)navigator.serviceWorker.register('sw.js').catch(()=>{});
 init();
 </script></body></html>
