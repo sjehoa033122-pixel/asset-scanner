@@ -269,8 +269,8 @@ $('#impBtn').onclick=()=>$('#impIn').click();
 $('#impIn').onchange=async e=>{const f=e.target.files[0];e.target.value='';if(f)await doImport(f)};
 async function doImport(file){
  if(!needX())return;const msg=$('#impMsg');
- let rows;
- try{const wb=XLSX.read(await file.arrayBuffer(),{type:'array',cellDates:true});rows=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{defval:''})}catch(x){msg.textContent='Could not read that file. Save it as .xlsx or .csv and try again.';return}
+ let rows,hrows=[];
+ try{const wb=XLSX.read(await file.arrayBuffer(),{type:'array',cellDates:true});rows=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{defval:''});const hs=wb.SheetNames.find(n=>nk(n)==='pmshistory');if(hs)hrows=XLSX.utils.sheet_to_json(wb.Sheets[hs],{defval:''})}catch(x){msg.textContent='Could not read that file. Save it as .xlsx or .csv and try again.';return}
  const map=new Map();let skipped=0;
  rows.forEach(raw=>{const r={};Object.keys(raw).forEach(k=>r[nk(k)]=raw[k]);
   const name=String(pick(r,K.name)).trim();if(!name){skipped++;return}
@@ -287,7 +287,16 @@ async function doImport(file){
  if(!out.length){msg.textContent='No assets found. Make sure the first row has headings like Name, Location and Date Purchased, and every asset has a Name.';return}
  if(!confirm('Import '+out.length+' asset(s)?\n'+added+' new, '+updated+' updated'+(skipped?', '+skipped+' skipped (no name)':'')+'.'))return;
  await persistMany(out);
- msg.textContent='Imported '+added+' new and updated '+updated+(skipped?'; skipped '+skipped+' row(s) with no name.':'.');go('assets');
+ let hadd=0;
+ if(hrows.length){const touched=new Map();
+  hrows.forEach(raw=>{const r={};Object.keys(raw).forEach(k=>r[nk(k)]=raw[k]);
+   const tag=String(r.tag||'').trim().toUpperCase().replace(/\s+/g,'');const d=toDate(r.pmsdate||r.date);if(!tag||!d)return;
+   const a=assets.find(x=>x.tag===tag);if(!a)return;const by=String(r.doneby||'').trim();
+   const h=(a.history||[]).slice();if(h.some(x=>x.date===d&&(x.by||'')===by))return;
+   h.push({date:d,by,notes:String(r.notes||'').trim(),cost:String(r.cost==null?'':r.cost).replace(/[^0-9.]/g,'')});
+   a.history=h;if(!a.lastPms||d>a.lastPms)a.lastPms=d;touched.set(tag,a);hadd++});
+  if(touched.size)await persistMany([...touched.values()])}
+ msg.textContent='Imported '+added+' new and updated '+updated+(skipped?'; skipped '+skipped+' row(s) with no name':'')+(hadd?'; '+hadd+' PMS record(s) imported':'')+'.';go('assets');
 }
 async function persistMany(list){
  list.forEach(a=>{const i=assets.findIndex(x=>x.tag===a.tag);if(i>=0)assets[i]=a;else assets.push(a)});
