@@ -39,8 +39,10 @@ input,select{width:100%;padding:10px;border:1px solid var(--br);border-radius:8p
 .lbl{text-align:center;padding:8px;border:1px dashed var(--br);border-radius:8px;background:#fff!important;color:#000!important;color-scheme:light;forced-color-adjust:none;-webkit-print-color-adjust:exact;print-color-adjust:exact}
 .lbl svg{max-width:100%;background:#fff;forced-color-adjust:none}
 @media print{#modal.on{position:static!important;background:none!important;display:block!important}#sheet{max-height:none!important;overflow:visible!important;box-shadow:none!important;border-radius:0!important;background:#fff!important;color:#000!important}.noprint{display:none!important}table.h{width:100%;border-collapse:collapse}table.h td,table.h th{border:1px solid #999;padding:4px 6px;text-align:left;font-size:12px}:root{color-scheme:light}body{background:#fff!important;color:#000!important}body *{visibility:hidden}.printarea,.printarea *{visibility:visible}.printarea{position:absolute;left:0;top:0;width:100%}}
+.bn{margin:0 12px 10px;padding:10px;border-radius:10px;background:var(--wn);color:#fff;font-weight:600;cursor:pointer}#areader{width:100%;border-radius:10px;overflow:hidden}
 </style></head><body>
 <header>Hospital Asset Scanner<small id="mode"></small></header>
+<div id="banner"></div>
 <main>
 <section id="t-scan" class="tab on">
  <div class="card"><div id="reader"></div>
@@ -69,7 +71,8 @@ input,select{width:100%;padding:10px;border:1px solid var(--br);border-radius:8p
 </div></section>
 <section id="t-rep" class="tab">
  <div class="card"><div class="stats" id="stats"></div></div>
- <div class="card"><b>PMS due / overdue</b><div id="pmsList"></div></div>
+ <div class="card"><b>PMS due / overdue</b><div id="pmsList"></div><button class="btn s" id="mailBtn">Email this list</button></div>
+ <div class="card"><b>By department</b><div id="deptList"></div></div>
  <div class="card"><b>Import / Export</b><div class="mu">Keep your inventory in Excel. Download the template, fill it in, then import it. Rows with an existing tag are updated; blank tags get a new HSP number.</div>
  <button class="btn" id="impBtn">Import from Excel / CSV</button><input type="file" id="impIn" accept=".xlsx,.xls,.csv" hidden>
  <button class="btn s" id="tplBtn">Download blank Excel template</button>
@@ -78,11 +81,20 @@ input,select{width:100%;padding:10px;border:1px solid var(--br);border-radius:8p
  <div class="mu" id="impMsg" style="margin-top:6px"></div></div>
  <div class="card"><b>Sync phone &amp; computer</b><div class="mu">Keeps one shared copy of the inventory on every device that connects.</div><div id="syncState" class="mu" style="margin:6px 0"></div>
  <button class="btn" id="syncBtn">Set up / change sync</button><button class="btn s" id="syncOut">Sign out of sync</button></div>
- <button class="btn s" id="prtBtn">Print all barcode labels</button>
+ <div class="card"><b>Your name</b><div class="mu">Shown as “updated by” on assets you change.</div><input id="myName" placeholder="e.g. Afhia"></div>
+ <div class="card"><b>Recycle bin</b><div class="mu">Deleted assets stay here until you remove them for good.</div><div id="binList"></div></div>
+ <div class="card"><b>Barcode labels</b><label>Department</label><select id="lblDept"></select><button class="btn s" id="prtBtn">Print barcode labels</button></div>
  <div class="printarea" id="labels" style="margin-top:12px"></div>
 </section>
+<section id="t-audit" class="tab"><div class="card"><b>Inventory audit</b><div class="mu">Pick a department or room, then scan every asset you find there.</div>
+ <label>Location / department</label><select id="au_loc"></select><div id="areader" style="margin-top:8px"></div>
+ <button class="btn" id="au_start">Start scanning</button>
+ <div class="row" style="margin-top:8px"><input id="au_man" placeholder="Or type a tag"><button class="btn s" id="au_add" style="width:80px;margin:0;flex:0 0 80px">Add</button></div>
+ <div id="au_sum" class="mu" style="margin-top:8px"></div></div>
+ <div class="card" id="au_res"></div>
+ <button class="btn s" id="au_csv">Export audit result (CSV)</button><button class="btn s" id="au_reset">Reset audit</button></section>
 </main>
-<nav><button data-t="scan" class="on">Scan</button><button data-t="assets">Assets</button><button data-t="add">Add</button><button data-t="rep">Report</button></nav>
+<nav><button data-t="scan" class="on">Scan</button><button data-t="assets">Assets</button><button data-t="add">Add</button><button data-t="audit">Audit</button><button data-t="rep">Report</button></nav>
 <div id="modal"><div id="sheet"></div></div>
 <script>
 let assets=[],coll=null,scanner=null,editing=null;
@@ -127,7 +139,9 @@ async function init(){
   try{firebase.initializeApp(cfg);firebase.auth().onAuthStateChanged(u=>{if(u)startCloud();else setMode('Sync needs sign-in (Report → Sync)')})}catch(e){setMode('Saved on this device (sync off)')}
  }else if(cfg){setMode('Saved on this device (cloud library not loaded)')}
 }
-async function persist(a){
+function who(){return localStorage.getItem('asset-name')||(typeof firebase!=='undefined'&&firebase.apps.length&&firebase.auth().currentUser&&firebase.auth().currentUser.email)||'this device'}
+const stampU=a=>{a.updatedAt=new Date().toISOString();a.updatedBy=who()};
+async function persist(a){stampU(a);
  const i=assets.findIndex(x=>x.tag===a.tag);if(i>=0)assets[i]=a;else assets.push(a);
  lsSave();if(coll)coll.doc(did(a.tag)).set(a).catch(()=>{});render();
 }
@@ -153,13 +167,13 @@ function maxN(list){let m=0;list.forEach(t=>{const x=String(t).match(/^HSP-(\d+)
 function nextTag(){return 'HSP-'+String(maxN(assets.map(a=>a.tag))+1).padStart(4,'0')}
 function barcode(tag,el){try{JsBarcode(el,tag,{format:'CODE128',width:2.5,height:80,fontSize:16,margin:14,background:'#ffffff',lineColor:'#000000',displayValue:true});el.style.background='#fff'}catch(e){}}
 function show(tag){
- const a=assets.find(x=>x.tag.toLowerCase()===String(tag).trim().toLowerCase());
+ const key=String(tag).trim().toLowerCase(),a=assets.find(x=>x.tag.toLowerCase()===key&&!x.deleted),bin=assets.find(x=>x.tag.toLowerCase()===key&&x.deleted);
  const sh=$('#sheet');
- if(!a){sh.innerHTML=`<h3>Not found</h3><p>No asset with tag <b>${esc(tag)}</b>.</p><button class="btn" id="addNew">Add as new asset</button><button class="btn s" onclick="closeM()">Close</button>`;
-  $('#addNew').onclick=()=>{closeM();resetForm();$('#f_tag').value=String(tag).trim().toUpperCase();go('add')};}
+ if(!a){sh.innerHTML=`<h3>Not found</h3>${bin?'<p>This asset is in the recycle bin.</p><button class="btn" id="addNew">Restore it</button>':'<p>No asset with tag <b>'+esc(tag)+'</b>.</p><button class="btn" id="addNew">Add as new asset</button>'}<button class="btn s" onclick="closeM()">Close</button>`;
+  $('#addNew').onclick=()=>{if(bin){restore(bin.tag);show(bin.tag);return}closeM();resetForm();$('#f_tag').value=String(tag).trim().toUpperCase();go('add')};}
  else{const p=pms(a);
   sh.innerHTML=`<div class="row" style="align-items:center"><h3 style="margin:0;flex:3">${esc(a.name)}</h3><span class="pill ${p.k}" style="flex:0 0 auto">${p.k=='ok'?'OK':p.k=='na'?'NO PMS':'PMS'}</span></div>
-  <div class="mu">${esc(a.tag)} · ${esc(a.cat)}</div>
+  <div class="mu">${esc(a.tag)} · ${esc(a.cat)}${a.updatedAt?' · updated '+fmt(a.updatedAt.slice(0,10))+' by '+esc(a.updatedBy||''):''}</div>
   <div class="card" style="margin-top:10px;border-color:var(--${p.k=='na'?'br':p.k})"><b>${p.t}</b><div class="mu">${p.due?'Next PMS: '+fmt(p.due)+' · every '+a.interval+' mo':''} ${a.lastPms?'· Last PMS: '+fmt(a.lastPms):''}</div></div>
   <div class="item"><span>Date purchased</span><b>${fmt(a.bought)}</b></div>
   <div class="item"><span>Age</span><b>${age(a.bought)||'—'}</b></div>
@@ -178,7 +192,7 @@ function show(tag){
   $('#donePms').onclick=()=>pmsForm(a);
   $('#repBtn').onclick=()=>assetReport(a);
   $('#edBtn').onclick=()=>{closeM();edit(a)};
-  $('#delBtn').onclick=()=>{if(confirm('Delete '+a.tag+'?')){remove(a.tag);closeM()}};}
+  $('#delBtn').onclick=()=>{if(confirm('Move '+a.tag+' to the recycle bin?')){softDelete(a.tag);closeM()}};}
  $('#modal').classList.add('on');
 }
 function hist(a){const h=(a.history||[]).slice();if(a.lastPms&&!h.some(x=>x.date===a.lastPms))h.push({date:a.lastPms,by:'',notes:'Last PMS on record',cost:''});return h.sort((x,y)=>y.date.localeCompare(x.date))}
@@ -202,7 +216,7 @@ function assetReport(a){const p=pms(a),h=hist(a);const sh=$('#sheet');
 function closeM(){$('#modal').classList.remove('on')}
 $('#modal').onclick=e=>{if(e.target.id=='modal')closeM()};
 function go(t){document.querySelectorAll('.tab').forEach(x=>x.classList.toggle('on',x.id=='t-'+t));document.querySelectorAll('nav button').forEach(b=>b.classList.toggle('on',b.dataset.t==t));
- if(t!='scan')stopScan();if(t=='add'&&!editing&&!$('#f_tag').value)$('#f_tag').value=nextTag();window.scrollTo(0,0)}
+ if(t!='scan')stopScan();if(t!='audit')stopAudit();if(t=='add'&&!editing&&!$('#f_tag').value)$('#f_tag').value=nextTag();window.scrollTo(0,0)}
 document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>go(b.dataset.t));
 async function stopScan(){if(scanner){try{await scanner.stop();scanner.clear()}catch(e){}scanner=null;$('#startBtn').textContent='Start camera scan'}}
 $('#startBtn').onclick=async()=>{
@@ -229,19 +243,39 @@ $('#saveBtn').onclick=async()=>{
  const a={tag,name,cat:$('#f_cat').value,loc:$('#f_loc').value.trim(),model:$('#f_model').value.trim(),sn:$('#f_sn').value.trim(),bought,cost:$('#f_cost').value,interval:parseInt($('#f_int').value)||0,lastPms:$('#f_last').value,cond:$('#f_cond').value,history:((editing&&assets.find(x=>x.tag===editing))||{}).history||[],created:new Date().toISOString()};
  await persist(a);resetForm();go('scan');show(tag);
 };
+let shown=50;
+const live=()=>assets.filter(a=>!a.deleted);
+const rowHTML=a=>{const p=pms(a);return`<div class="item" onclick="show('${esc(a.tag)}')"><div><b>${esc(a.name)}</b><div class="mu">${esc(a.tag)} · ${esc(a.loc)||'no location'} · bought ${fmt(a.bought)}</div></div><span class="pill ${p.k}">${p.k=='na'?'No PMS':p.k=='ok'?'OK':p.k=='wn'?'Due':'Overdue'}</span></div>`};
+function deptData(){const dep={};live().forEach(a=>{const p=pms(a),k=a.loc||'(no location)',d=dep[k]||(dep[k]={n:0,bad:0,wn:0,cost:0});d.n++;if(p.k=='bad')d.bad++;if(p.k=='wn')d.wn++;d.cost+=Number(a.cost)||0});return dep}
+const deptRows=()=>Object.entries(deptData()).sort().map(([k,d])=>[k,d.n,d.bad,d.wn,d.cost]);
+function fillSel(id,first){const el=$(id),cur=el.value,locs=[...new Set(live().map(a=>a.loc).filter(Boolean))].sort();el.innerHTML=`<option value="">${first}</option>`+locs.map(l=>`<option>${esc(l)}</option>`).join('');el.value=cur}
+function markBackup(){try{localStorage.setItem('asset-backup',Date.now())}catch(e){}banner()}
+function banner(){const t=+localStorage.getItem('asset-backup')||0,days=(Date.now()-t)/864e5;$('#banner').innerHTML=live().length&&days>7?`<div class="bn" onclick="go('rep')">Backup reminder: ${t?'last backup '+Math.floor(days)+' days ago':'no backup yet'}. Tap to export to Excel.</div>`:''}
 function render(){
- const q=$('#q').value.toLowerCase();
- const l=assets.filter(a=>[a.tag,a.name,a.loc,a.cat,a.sn].join(' ').toLowerCase().includes(q)).sort((a,b)=>a.tag.localeCompare(b.tag));
- $('#list').innerHTML=l.length?l.map(a=>{const p=pms(a);return`<div class="item" onclick="show('${esc(a.tag)}')"><div><b>${esc(a.name)}</b><div class="mu">${esc(a.tag)} · ${esc(a.loc)||'no location'} · bought ${fmt(a.bought)}</div></div><span class="pill ${p.k}">${p.k=='na'?'No PMS':p.k=='ok'?'OK':p.k=='wn'?'Due':'Overdue'}</span></div>`}).join(''):'<div class="mu">No assets yet. Tap Add to register your first one.</div>';
- const all=assets.map(a=>({a,p:pms(a)}));const c=k=>all.filter(x=>x.p.k==k).length;
- $('#stats').innerHTML=`<div><b>${assets.length}</b><span class="mu">Total</span></div><div><b style="color:var(--bad)">${c('bad')}</b><span class="mu">Overdue</span></div><div><b style="color:var(--wn)">${c('wn')}</b><span class="mu">Due soon</span></div><div><b style="color:var(--ok)">${c('ok')}</b><span class="mu">OK</span></div>`;
+ const q=$('#q').value.toLowerCase(),L=live();
+ const l=L.filter(a=>[a.tag,a.name,a.loc,a.cat,a.sn].join(' ').toLowerCase().includes(q)).sort((a,b)=>a.tag.localeCompare(b.tag));
+ $('#list').innerHTML=(l.length?l.slice(0,shown).map(rowHTML).join(''):'<div class="mu">No assets yet. Tap Add or import an Excel file.</div>')+(l.length>shown?`<button class="btn s" onclick="shown+=50;render()">Show more (${l.length-shown} left)</button>`:'');
+ const all=L.map(a=>({a,p:pms(a)}));const c=k=>all.filter(x=>x.p.k==k).length;
+ $('#stats').innerHTML=`<div><b>${L.length}</b><span class="mu">Total</span></div><div><b style="color:var(--bad)">${c('bad')}</b><span class="mu">Overdue</span></div><div><b style="color:var(--wn)">${c('wn')}</b><span class="mu">Due soon</span></div><div><b style="color:var(--ok)">${c('ok')}</b><span class="mu">OK</span></div>`;
  const due=all.filter(x=>x.p.k=='bad'||x.p.k=='wn').sort((x,y)=>(x.p.days??-1e9)-(y.p.days??-1e9));
  $('#pmsList').innerHTML=due.length?due.map(x=>`<div class="item" onclick="show('${esc(x.a.tag)}')"><div><b>${esc(x.a.name)}</b><div class="mu">${esc(x.a.tag)} · ${esc(x.a.loc)}</div></div><span class="pill ${x.p.k}">${x.p.k=='bad'?'Overdue':'Due'}</span></div>`).join(''):'<div class="mu">Nothing due.</div>';
- $('#labels').innerHTML=assets.map(a=>`<div class="lbl" style="display:inline-block;width:48%;margin:1%;break-inside:avoid"><div style="font:600 11px sans-serif">${esc(a.name)}</div><svg class="lb" data-t="${esc(a.tag)}"></svg></div>`).join('');
- document.querySelectorAll('.lb').forEach(s=>barcode(s.dataset.t,s));
+ $('#deptList').innerHTML=deptRows().map(([k,n,b,w,c])=>`<div class="item"><div><b>${esc(k)}</b><div class="mu">${n} assets · ${b} overdue · ${w} due soon</div></div><b>₱${c.toLocaleString()}</b></div>`).join('')||'<div class="mu">No assets yet.</div>';
+ const bin=assets.filter(a=>a.deleted);
+ $('#binList').innerHTML=bin.length?bin.map(a=>`<div class="item"><div><b>${esc(a.name)}</b><div class="mu">${esc(a.tag)}</div></div><span><button class="btn s" style="width:auto;margin:0;padding:6px 10px" onclick="restore('${esc(a.tag)}')">Restore</button> <button class="btn s" style="width:auto;margin:0;padding:6px 10px" onclick="purge('${esc(a.tag)}')">Delete forever</button></span></div>`).join(''):'<div class="mu">Empty.</div>';
+ fillSel('#lblDept','All departments');fillSel('#au_loc','(all locations)');banner();if($('#t-audit').classList.contains('on'))auRender();
 }
-$('#q').oninput=render;
-$('#prtBtn').onclick=()=>window.print();
+function softDelete(tag){const a=assets.find(x=>x.tag===tag);if(a){a.deleted=true;a.deletedAt=new Date().toISOString();persist(a)}}
+function restore(tag){const a=assets.find(x=>x.tag===tag);if(a){a.deleted=false;delete a.deletedAt;persist(a)}}
+function purge(tag){if(confirm('Delete '+tag+' for good? This cannot be undone.'))remove(tag)}
+$('#q').oninput=()=>{shown=50;render()};
+$('#prtBtn').onclick=()=>{const d=$('#lblDept').value,L=live().filter(a=>!d||a.loc===d).sort((a,b)=>a.tag.localeCompare(b.tag));
+ if(!L.length)return alert('No assets to print.');if(L.length>200&&!confirm('Print '+L.length+' labels?'))return;
+ $('#labels').innerHTML=L.map(a=>`<div class="lbl" style="display:inline-block;width:48%;margin:1%;break-inside:avoid"><div style="font:600 11px sans-serif">${esc(a.name)}</div><svg class="lb" data-t="${esc(a.tag)}"></svg></div>`).join('');
+ document.querySelectorAll('.lb').forEach(s=>barcode(s.dataset.t,s));setTimeout(()=>window.print(),400)};
+$('#mailBtn').onclick=()=>{const L=live().map(a=>({a,p:pms(a)})).filter(x=>x.p.k=='bad'||x.p.k=='wn').slice(0,25);
+ if(!L.length)return alert('Nothing due.');const body=L.map(x=>x.a.name+' ('+x.a.tag+') - '+(x.a.loc||'no location')+' - '+x.p.t).join('\n');
+ location.href='mailto:?subject='+encodeURIComponent('PMS due / overdue list '+today())+'&body='+encodeURIComponent(body)};
+$('#myName').value=localStorage.getItem('asset-name')||'';$('#myName').oninput=e=>{try{localStorage.setItem('asset-name',e.target.value.trim())}catch(x){}};
 const HDR=['Tag','Name','Category','Location','Brand/Model','Serial No','Date Purchased','Cost','Condition','PMS Interval (months)','Last PMS Date'];
 const HDR2=[...HDR,'Age','Next PMS Date','PMS Status'];
 const CATS=['Medical equipment','Biomedical / lab','Furniture','IT equipment','Building / utility','Vehicle','Other'];
@@ -262,10 +296,10 @@ function toInt(v){const t=String(v).toLowerCase().trim();if(!t)return 0;if(/year
 function dl(name,blob){const u=URL.createObjectURL(blob);const x=document.createElement('a');x.href=u;x.download=name;document.body.appendChild(x);x.click();setTimeout(()=>{x.remove();URL.revokeObjectURL(u)},1500)}
 function needX(){if(typeof XLSX==='undefined'){alert('The Excel part did not load. Connect to the internet, close and reopen the app, then try again. CSV export still works.');return false}return true}
 function xlsxBlob(sheets){const wb=XLSX.utils.book_new();sheets.forEach(([n,aoa])=>{const ws=XLSX.utils.aoa_to_sheet(aoa);ws['!cols']=aoa[0].map(h=>({wch:Math.max(14,String(h).length+2)}));XLSX.utils.book_append_sheet(wb,ws,n)});return new Blob([XLSX.write(wb,{bookType:'xlsx',type:'array'})],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'})}
-function exportRows(){return assets.slice().sort((a,b)=>a.tag.localeCompare(b.tag)).map(a=>{const p=pms(a);return[a.tag,a.name,a.cat,a.loc,a.model,a.sn,a.bought,a.cost===''||a.cost==null?'':(Number(a.cost)||''),a.cond,parseInt(a.interval)||0,a.lastPms||'',age(a.bought),p.due||'',p.t]})}
+function exportRows(){return live().sort((a,b)=>a.tag.localeCompare(b.tag)).map(a=>{const p=pms(a);return[a.tag,a.name,a.cat,a.loc,a.model,a.sn,a.bought,a.cost===''||a.cost==null?'':(Number(a.cost)||''),a.cond,parseInt(a.interval)||0,a.lastPms||'',age(a.bought),p.due||'',p.t]})}
 const stamp=()=>today();
-$('#xlsxBtn').onclick=()=>{if(!needX())return;dl('hospital-assets-'+stamp()+'.xlsx',xlsxBlob([['Assets',[HDR2,...exportRows()]],['PMS History',[['Tag','Asset','PMS Date','Done By','Notes','Cost'],...assets.flatMap(a=>hist(a).map(h=>[a.tag,a.name,h.date,h.by||'',h.notes||'',h.cost===''||h.cost==null?'':Number(h.cost)||'']))]]]))};
-$('#csvBtn').onclick=()=>{const csv=[HDR2,...exportRows()].map(r=>r.map(v=>'"'+String(v==null?'':v).replace(/"/g,'""')+'"').join(',')).join('\n');dl('hospital-assets-'+stamp()+'.csv',new Blob(['\ufeff'+csv],{type:'text/csv'}))};
+$('#xlsxBtn').onclick=()=>{if(!needX())return;markBackup();dl('hospital-assets-'+stamp()+'.xlsx',xlsxBlob([['Assets',[HDR2,...exportRows()]],['By Department',[['Department','Assets','Overdue','Due soon','Total cost'],...deptRows()]],['PMS History',[['Tag','Asset','PMS Date','Done By','Notes','Cost'],...live().flatMap(a=>hist(a).map(h=>[a.tag,a.name,h.date,h.by||'',h.notes||'',h.cost===''||h.cost==null?'':Number(h.cost)||'']))]]]))};
+$('#csvBtn').onclick=()=>{markBackup();const csv=[HDR2,...exportRows()].map(r=>r.map(v=>'"'+String(v==null?'':v).replace(/"/g,'""')+'"').join(',')).join('\n');dl('hospital-assets-'+stamp()+'.csv',new Blob(['\ufeff'+csv],{type:'text/csv'}))};
 $('#tplBtn').onclick=()=>{if(!needX())return;dl('asset-import-template.xlsx',xlsxBlob([['Assets',[HDR]],['Example (not imported)',[HDR,['','Patient monitor','Medical equipment','ICU','Philips MX450','SN12345','2022-06-01',85000,'Good',12,'2025-06-01']]],['Notes',[['How to fill in'],['Name is required. Everything else is optional.'],['Tag: leave blank to get an automatic HSP number. If the tag already exists the asset is updated.'],['Date Purchased and Last PMS Date: use YYYY-MM-DD or a normal Excel date.'],['PMS Interval (months): 0 or blank = no PMS. 12 = yearly, 3 = every quarter.'],['Condition: Good, Fair, Needs repair or Condemned.'],['Put your assets in the first sheet named Assets. Only the first sheet is imported.']]]])) };
 $('#impBtn').onclick=()=>$('#impIn').click();
 $('#impIn').onchange=async e=>{const f=e.target.files[0];e.target.value='';if(f)await doImport(f)};
@@ -301,6 +335,7 @@ async function doImport(file){
  msg.textContent='Imported '+added+' new and updated '+updated+(skipped?'; skipped '+skipped+' row(s) with no name':'')+(hadd?'; '+hadd+' PMS record(s) imported':'')+'.';go('assets');
 }
 async function persistMany(list){
+ list.forEach(stampU);
  list.forEach(a=>{const i=assets.findIndex(x=>x.tag===a.tag);if(i>=0)assets[i]=a;else assets.push(a)});
  lsSave();if(coll)list.forEach(a=>coll.doc(did(a.tag)).set(a).catch(()=>{}));render();
 }
@@ -317,6 +352,27 @@ function syncForm(){
 }
 $('#syncBtn').onclick=syncForm;
 $('#syncOut').onclick=async()=>{try{if(typeof firebase!=='undefined'&&firebase.apps.length)await firebase.auth().signOut()}catch(e){}if(unsub){unsub();unsub=null}coll=null;setMode('Saved on this device (sync off)')};
+
+let au=new Set(JSON.parse(localStorage.getItem('asset-audit')||'[]')),auSc=null,auLast='',auT=0;
+const auSave=()=>{try{localStorage.setItem('asset-audit',JSON.stringify([...au]))}catch(e){}};
+function auAdd(t){t=String(t).trim().toUpperCase();if(!t)return;if(t===auLast&&Date.now()-auT<2500)return;auLast=t;auT=Date.now();if(!au.has(t)){au.add(t);auSave();try{navigator.vibrate&&navigator.vibrate(80)}catch(e){}}auRender()}
+function auData(){const loc=$('#au_loc').value,L=live(),exp=loc?L.filter(a=>a.loc===loc):L;
+ return{loc,exp,found:exp.filter(a=>au.has(a.tag)),miss:exp.filter(a=>!au.has(a.tag)),els:loc?L.filter(a=>au.has(a.tag)&&a.loc!==loc):[],unk:[...au].filter(t=>!L.some(a=>a.tag===t))}}
+function auRender(){const d=auData();
+ $('#au_sum').textContent='Scanned '+au.size+' · found '+d.found.length+' of '+d.exp.length+' · missing '+d.miss.length;
+ const sec=(t,arr,fn)=>arr.length?`<b>${t} (${arr.length})</b>`+arr.map(fn).join(''):'';
+ const nm=a=>`<div><b>${esc(a.name)}</b><div class="mu">${esc(a.tag)} · ${esc(a.loc)||'no location'}</div></div>`;
+ $('#au_res').innerHTML=sec('Missing',d.miss,a=>`<div class="item">${nm(a)}<span class="pill bad">Missing</span></div>`)+sec('Found in another location',d.els,a=>`<div class="item">${nm(a)}<button class="btn s" style="width:auto;margin:0" onclick="auMove('${esc(a.tag)}')">Move here</button></div>`)+sec('Not in inventory',d.unk,t=>`<div class="item"><b>${esc(t)}</b></div>`)+sec('Found',d.found,a=>`<div class="item">${nm(a)}<span class="pill ok">OK</span></div>`)}
+function auMove(t){const a=assets.find(x=>x.tag===t),loc=$('#au_loc').value;if(a&&loc&&confirm('Move '+a.tag+' to '+loc+'?')){a.loc=loc;persist(a)}}
+async function stopAudit(){if(auSc){try{await auSc.stop();auSc.clear()}catch(e){}auSc=null;$('#au_start').textContent='Start scanning'}}
+$('#au_start').onclick=async()=>{if(auSc)return stopAudit();
+ try{auSc=new Html5Qrcode('areader',SCFG);await auSc.start({facingMode:'environment'},{fps:15,qrbox:(w,h)=>({width:Math.floor(Math.min(w*0.92,420)),height:Math.floor(Math.min(h*0.6,160))})},t=>auAdd(t),()=>{});$('#au_start').textContent='Stop scanning'}
+ catch(e){auSc=null;$('#au_sum').textContent='Camera unavailable. Type the tags instead.'}};
+$('#au_add').onclick=()=>{auAdd($('#au_man').value);$('#au_man').value=''};$('#au_man').onkeydown=e=>{if(e.key=='Enter')$('#au_add').click()};
+$('#au_loc').onchange=auRender;
+$('#au_reset').onclick=()=>{if(confirm('Clear all scanned tags for this audit?')){au=new Set();auSave();auRender()}};
+$('#au_csv').onclick=()=>{const d=auData(),r=[['Result','Tag','Name','Listed location'],...d.miss.map(a=>['Missing',a.tag,a.name,a.loc]),...d.els.map(a=>['In another location',a.tag,a.name,a.loc]),...d.unk.map(t=>['Not in inventory',t,'','']),...d.found.map(a=>['Found',a.tag,a.name,a.loc])];
+ dl('audit-'+(d.loc||'all')+'-'+today()+'.csv',new Blob(['\ufeff'+r.map(x=>x.map(v=>'"'+String(v==null?'':v).replace(/"/g,'""')+'"').join(',')).join('\n')],{type:'text/csv'}))};
 
 if('serviceWorker' in navigator)navigator.serviceWorker.register('sw.js').catch(()=>{});
 init();
