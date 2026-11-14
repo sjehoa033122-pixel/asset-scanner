@@ -40,7 +40,7 @@ input,select{width:100%;padding:10px;border:1px solid var(--br);border-radius:8p
 .lbl svg{max-width:100%;background:#fff;forced-color-adjust:none}
 @media print{#modal.on{position:static!important;background:none!important;display:block!important}#sheet{max-height:none!important;overflow:visible!important;box-shadow:none!important;border-radius:0!important;background:#fff!important;color:#000!important}.noprint{display:none!important}table.h{width:100%;border-collapse:collapse}table.h td,table.h th{border:1px solid #999;padding:4px 6px;text-align:left;font-size:12px}:root{color-scheme:light}body{background:#fff!important;color:#000!important}body *{visibility:hidden}.printarea,.printarea *{visibility:visible}.printarea{position:absolute;left:0;top:0;width:100%}}
 .bn{margin:0 12px 10px;padding:10px;border-radius:10px;background:var(--wn);color:#fff;font-weight:600;cursor:pointer}#areader{width:100%;border-radius:10px;overflow:hidden}
-body[data-role=viewer] .w,body[data-role=viewer] nav [data-t=add]{display:none!important}body:not([data-role=admin]) .adm{display:none!important}.lb2{break-inside:avoid}
+body:is([data-role=viewer],[data-role=requester],[data-role=verifier],[data-role=approver]) .w,body:is([data-role=viewer],[data-role=requester],[data-role=verifier],[data-role=approver]) nav [data-t=add]{display:none!important}body:is([data-role=viewer],[data-role=verifier],[data-role=approver],[data-role=engineer]) .rq{display:none!important}body:not([data-role=admin]) .adm{display:none!important}.lb2{break-inside:avoid}
 </style>
 <style id="pgst"></style></head><body>
 <header>Hospital Asset Scanner<small id="mode"></small></header>
@@ -89,6 +89,9 @@ body[data-role=viewer] .w,body[data-role=viewer] nav [data-t=add]{display:none!i
  <div class="card"><b>Barcode labels</b><label>Department</label><select id="lblDept"></select><label>Label size</label><select id="lblSize"><option value="a4">A4 sheet (3 per row)</option><option value="s">Small label 50 × 25 mm (thermal)</option><option value="l">Large label 100 × 50 mm</option></select><button class="btn s" id="prtBtn">Print barcode labels</button></div>
  <div class="printarea" id="labels" style="margin-top:12px"></div>
 </section>
+<section id="t-req" class="tab"><button class="btn rq" id="rq_new">New request</button>
+ <select id="rq_f" style="margin:8px 0"><option value="q">My queue</option><option value="all">All requests</option><option value="done">Completed / rejected</option></select>
+ <div class="card" id="rq_list"></div></section>
 <section id="t-audit" class="tab"><div class="card"><b>Inventory audit</b><div class="mu">Pick a department or room, then scan every asset you find there.</div>
  <label>Location / department</label><select id="au_loc"></select><div id="areader" style="margin-top:8px"></div>
  <button class="btn" id="au_start">Start scanning</button>
@@ -97,7 +100,7 @@ body[data-role=viewer] .w,body[data-role=viewer] nav [data-t=add]{display:none!i
  <div class="card" id="au_res"></div>
  <button class="btn s" id="au_csv">Export audit result (CSV)</button><button class="btn s" id="au_reset">Reset audit</button></section>
 </main>
-<nav><button data-t="scan" class="on">Scan</button><button data-t="assets">Assets</button><button data-t="add">Add</button><button data-t="audit">Audit</button><button data-t="rep">Report</button></nav>
+<nav><button data-t="scan" class="on">Scan</button><button data-t="assets">Assets</button><button data-t="add">Add</button><button data-t="req" id="navReq">Requests</button><button data-t="audit">Audit</button><button data-t="rep">Report</button></nav>
 <input type="file" id="phIn" accept="image/*" capture="environment" hidden>
 <div id="modal"><div id="sheet"></div></div>
 <script>
@@ -115,9 +118,9 @@ function setMode(t){$('#mode').textContent=t;const e=$('#syncState');if(e)e.text
 function parseCfg(t){t=String(t||'').trim();if(!t)return null;try{const o=JSON.parse(t);if(o&&o.apiKey&&o.projectId)return o}catch(e){}
  const o={};let m;const re=/(\w+)\s*:\s*["']([^"']*)["']/g;while((m=re.exec(t)))o[m[1]]=m[2];return(o.apiKey&&o.projectId)?o:null}
 function friendly(x){const c=x&&x.code||'';if(/invalid-credential|wrong-password|user-not-found|invalid-email/.test(c))return'Wrong email or password.';if(/network/.test(c))return'No internet connection.';if(/operation-not-allowed/.test(c))return'Email/Password sign-in is not turned on in Firebase.';if(/api-key/.test(c))return'The Firebase config looks wrong. Paste the whole block again.';return c||(x&&x.message)||'Could not connect.'}
-let role='admin';
+let role='admin',dept='';
 function applyRole(){document.body.dataset.role=role}
-async function loadRole(){try{const u=firebase.auth().currentUser;if(u){const d=await firebase.firestore().collection('users').doc(u.uid).get();role=d.exists?(d.data().role||'viewer'):'viewer'}}catch(e){role='admin'}applyRole()}
+async function loadRole(){try{const u=firebase.auth().currentUser;if(u){const d=await firebase.firestore().collection('users').doc(u.uid).get();role=d.exists?(d.data().role||'viewer'):'viewer';dept=d.exists?(d.data().dept||''):''}}catch(e){role='admin'}applyRole();startReq();rqRender()}
 function startCloud(){loadRole();
  const db=firebase.firestore();try{db.enablePersistence({synchronizeTabs:true}).catch(()=>{})}catch(e){}
  coll=db.collection('assets');if(unsub)unsub();
@@ -196,11 +199,12 @@ function show(tag){
   <div class="lbl" style="margin-top:8px"><svg id="bc"></svg></div>
   <button class="btn w" id="donePms">Record PMS done</button>
   <div class="row"><button class="btn s w" id="repairBtn">Record repair</button><button class="btn s w" id="phBtn">${a.photo?'Change photo':'Add photo'}</button></div>
+  <button class="btn s rq" id="rqBtn">Report a problem / request repair</button>
   <button class="btn s" id="repBtn">Full asset report (print / PDF)</button>
   <div class="row"><button class="btn s w" id="edBtn">Edit</button><button class="btn s adm" id="delBtn">Delete</button></div>
   <button class="btn s" onclick="closeM()">Close</button>`;
   barcode(a.tag,$('#bc'));
-  $('#donePms').onclick=()=>pmsForm(a);$('#repairBtn').onclick=()=>repForm(a);$('#phBtn').onclick=()=>{phTag=a.tag;$('#phIn').click()};
+  $('#donePms').onclick=()=>pmsForm(a);$('#repairBtn').onclick=()=>repForm(a);$('#rqBtn').onclick=()=>newReq({tag:a.tag});$('#phBtn').onclick=()=>{phTag=a.tag;$('#phIn').click()};
   $('#repBtn').onclick=()=>assetReport(a);
   $('#edBtn').onclick=()=>{closeM();edit(a)};
   $('#delBtn').onclick=()=>{if(confirm('Move '+a.tag+' to the recycle bin?')){softDelete(a.tag);closeM()}};}
@@ -311,7 +315,7 @@ function needX(){if(typeof XLSX==='undefined'){alert('The Excel part did not loa
 function xlsxBlob(sheets){const wb=XLSX.utils.book_new();sheets.forEach(([n,aoa])=>{const ws=XLSX.utils.aoa_to_sheet(aoa);ws['!cols']=aoa[0].map(h=>({wch:Math.max(14,String(h).length+2)}));XLSX.utils.book_append_sheet(wb,ws,n)});return new Blob([XLSX.write(wb,{bookType:'xlsx',type:'array'})],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'})}
 function exportRows(){return live().sort((a,b)=>a.tag.localeCompare(b.tag)).map(a=>{const p=pms(a);return[a.tag,a.name,a.cat,a.loc,a.model,a.sn,a.bought,a.cost===''||a.cost==null?'':(Number(a.cost)||''),a.cond,parseInt(a.interval)||0,a.lastPms||'',age(a.bought),p.due||'',p.t]})}
 const stamp=()=>today();
-$('#xlsxBtn').onclick=()=>{if(!needX())return;markBackup();dl('hospital-assets-'+stamp()+'.xlsx',xlsxBlob([['Assets',[HDR2,...exportRows()]],['By Department',[['Department','Assets','Overdue','Due soon','Total cost'],...deptRows()]],['Repairs',[['Tag','Asset','Date','Problem','Action','Cost','Downtime days','By'],...live().flatMap(a=>(a.repairs||[]).map(r=>[a.tag,a.name,r.date,r.problem,r.action,Number(r.cost)||'',Number(r.days)||'',r.by||'']))]],['Location history',[['Tag','Asset','Date','From','To','Custodian','By'],...live().flatMap(a=>(a.moves||[]).map(m=>[a.tag,a.name,m.date,m.from,m.to,m.cust,m.by||'']))]],['PMS History',[['Tag','Asset','PMS Date','Done By','Notes','Cost'],...live().flatMap(a=>hist(a).map(h=>[a.tag,a.name,h.date,h.by||'',h.notes||'',h.cost===''||h.cost==null?'':Number(h.cost)||'']))]]]))};
+$('#xlsxBtn').onclick=()=>{if(!needX())return;markBackup();dl('hospital-assets-'+stamp()+'.xlsx',xlsxBlob([['Assets',[HDR2,...exportRows()]],['By Department',[['Department','Assets','Overdue','Due soon','Total cost'],...deptRows()]],['Requests',[['ID','Tag','Asset','Dept','Type','Priority','Problem','Status','Requested by','Date','Approved cost','Last remark'],...reqs.map(r=>[r.id,r.tag,r.name,r.dept,r.type,r.priority,r.problem,r.status,r.by,r.date,r.apCost||'',(r.log[r.log.length-1]||{}).remark||''])]],['Repairs',[['Tag','Asset','Date','Problem','Action','Cost','Downtime days','By'],...live().flatMap(a=>(a.repairs||[]).map(r=>[a.tag,a.name,r.date,r.problem,r.action,Number(r.cost)||'',Number(r.days)||'',r.by||'']))]],['Location history',[['Tag','Asset','Date','From','To','Custodian','By'],...live().flatMap(a=>(a.moves||[]).map(m=>[a.tag,a.name,m.date,m.from,m.to,m.cust,m.by||'']))]],['PMS History',[['Tag','Asset','PMS Date','Done By','Notes','Cost'],...live().flatMap(a=>hist(a).map(h=>[a.tag,a.name,h.date,h.by||'',h.notes||'',h.cost===''||h.cost==null?'':Number(h.cost)||'']))]]]))};
 $('#csvBtn').onclick=()=>{markBackup();const csv=[HDR2,...exportRows()].map(r=>r.map(v=>'"'+String(v==null?'':v).replace(/"/g,'""')+'"').join(',')).join('\n');dl('hospital-assets-'+stamp()+'.csv',new Blob(['\ufeff'+csv],{type:'text/csv'}))};
 $('#tplBtn').onclick=()=>{if(!needX())return;dl('asset-import-template.xlsx',xlsxBlob([['Assets',[HDR]],['Example (not imported)',[HDR,['','Patient monitor','Medical equipment','ICU','Philips MX450','SN12345','2022-06-01',85000,'Good',12,'2025-06-01']]],['Notes',[['How to fill in'],['Name is required. Everything else is optional.'],['Tag: leave blank to get an automatic HSP number. If the tag already exists the asset is updated.'],['Date Purchased and Last PMS Date: use YYYY-MM-DD or a normal Excel date.'],['PMS Interval (months): 0 or blank = no PMS. 12 = yearly, 3 = every quarter.'],['Condition: Good, Fair, Needs repair or Condemned.'],['Put your assets in the first sheet named Assets. Only the first sheet is imported.']]]])) };
 $('#impBtn').onclick=()=>$('#impIn').click();
@@ -398,6 +402,53 @@ function repForm(a){$('#sheet').innerHTML=`<h3>Record repair · ${esc(a.name)}</
  $('#r_s').onclick=async()=>{if(!$('#r_d').value||!$('#r_p').value.trim())return alert('Enter the date and the problem.');a.repairs=(a.repairs||[]).concat([{date:$('#r_d').value,problem:$('#r_p').value.trim(),action:$('#r_a').value.trim(),cost:$('#r_c').value,days:$('#r_n').value,by:$('#r_b').value.trim()}]);await persist(a);show(a.tag)}}
 function rptExtra(a){const t=(h,rows)=>rows.length?`<table class="h" style="width:100%;border-collapse:collapse"><tr>${h.map(x=>'<th>'+x+'</th>').join('')}</tr>${rows.map(r=>'<tr>'+r.map(c=>'<td>'+c+'</td>').join('')+'</tr>').join('')}</table>`:'<div>None recorded.</div>';
  return`<h3 style="margin:14px 0 4px">Repair log</h3>${t(['Date','Problem','Action','Down (days)','Cost'],(a.repairs||[]).slice().sort(byDate).map(x=>[fmt(x.date),esc(x.problem),esc(x.action),esc(x.days),x.cost?'₱'+Number(x.cost).toLocaleString():'']))}<h3 style="margin:14px 0 4px">Location and custodian history</h3>${t(['Date','From','To','Custodian'],(a.moves||[]).slice().sort(byDate).map(x=>[fmt(x.date),esc(x.from),esc(x.to),esc(x.cust)]))}${a.photo?`<h3 style="margin:14px 0 4px">Photo</h3><img src="${a.photo}" style="max-width:100%;max-height:240px">`:''}`}
+
+let reqs=[];try{reqs=JSON.parse(localStorage.getItem('asset-requests')||'[]')}catch(e){}
+let rcoll=null,runsub=null;
+const rqSave=()=>{try{localStorage.setItem('asset-requests',JSON.stringify(reqs))}catch(e){}};
+function startReq(){if(typeof firebase==='undefined'||!firebase.apps.length||!firebase.auth().currentUser)return;if(runsub)runsub();
+ rcoll=firebase.firestore().collection('requests');const q=(role==='requester')?rcoll.where('dept','==',dept):rcoll;
+ runsub=q.onSnapshot(sn=>{reqs=sn.docs.map(d=>d.data());rqSave();rqRender()},()=>{})}
+function saveReq(r){const i=reqs.findIndex(x=>x.id===r.id);if(i>=0)reqs[i]=r;else reqs.push(r);rqSave();if(rcoll)rcoll.doc(r.id).set(r).catch(()=>{});rqRender()}
+const isR=x=>role===x||role==='admin';
+const ST={submitted:['Submitted','wn'],verified:['Verified','wn'],returned:['Returned','bad'],approved:['Approved','ok'],rejected:['Rejected','bad'],queued:['Queued','ok'],inprogress:['In progress','wn'],completed:['Completed','ok']};
+const mine=r=>role==='requester'?!['completed','rejected'].includes(r.status):role==='verifier'?r.status=='submitted':role=='approver'?r.status=='verified':role=='engineer'?['approved','queued','inprogress'].includes(r.status):!['completed','rejected'].includes(r.status);
+function rqRender(){const f=$('#rq_f').value,n=reqs.filter(mine).length;$('#navReq').textContent='Requests'+(n?' ('+n+')':'');
+ const l=reqs.filter(r=>f=='all'||(f=='q'?mine(r):['completed','rejected'].includes(r.status))).sort((a,b)=>(b.created||'').localeCompare(a.created||''));
+ $('#rq_list').innerHTML=l.length?l.map(r=>`<div class="item" onclick="showReq('${esc(r.id)}')"><div><b>${esc(r.name)}</b> · ${esc(r.type)}<div class="mu">${esc(r.tag)} · ${esc(r.dept)} · ${esc(r.priority)} · ${fmt(r.date)}</div><div class="mu">${esc(r.problem)}</div></div><span class="pill ${ST[r.status][1]}">${ST[r.status][0]}</span></div>`).join(''):'<div class="mu">Nothing here.</div>'}
+$('#rq_f').onchange=rqRender;$('#rq_new').onclick=()=>newReq({});
+function newReq(r0){const e=!!r0.id;$('#sheet').innerHTML=`<h3>${e?'Edit and resubmit':'New request'}</h3><label>Asset tag</label><input id="q_t" value="${esc(r0.tag||'')}" autocapitalize="characters"><label>Type</label><select id="q_y"><option>Repair</option><option>PMS</option><option>Other report</option></select><label>Priority</label><select id="q_p"><option>Normal</option><option>Urgent</option><option>Low</option></select><label>Problem / details</label><input id="q_d" value="${esc(r0.problem||'')}"><label>Photo (optional)</label><input type="file" id="q_f" accept="image/*" capture="environment"><button class="btn" id="q_s">Submit</button><button class="btn s" onclick="closeM()">Cancel</button>`;
+ if(r0.type)$('#q_y').value=r0.type;if(r0.priority)$('#q_p').value=r0.priority;$('#modal').classList.add('on');
+ $('#q_s').onclick=async()=>{const a=live().find(x=>x.tag===$('#q_t').value.trim().toUpperCase()),p=$('#q_d').value.trim();if(!a)return alert('Asset tag not found.');if(!p)return alert('Describe the problem.');
+  const f=$('#q_f').files[0];let ph=r0.photo||'';if(f){try{ph=await imgResize(f,640,0.5)}catch(x){}}
+  const d=today(),by=who(),r=e?r0:{id:'REQ'+Date.now().toString(36).toUpperCase(),log:[],created:new Date().toISOString(),by,date:d};
+  Object.assign(r,{tag:a.tag,name:a.name,dept:(role==='requester'&&dept)||r0.dept||a.loc||'',type:$('#q_y').value,priority:$('#q_p').value,problem:p,photo:ph,status:'submitted'});
+  r.log.push({status:'submitted',by,date:d,remark:e?'Resubmitted':''});saveReq(r);closeM();go('req')}}
+function step(r,st,x,remark){Object.assign(r,x||{});r.status=st;r.log.push({status:st,by:who(),date:today(),remark:remark||''});saveReq(r);showReq(r.id)}
+function showReq(id){const r=reqs.find(x=>x.id===id);if(!r)return;const v=i=>$('#'+i).value.trim();
+ const act=(r.status=='submitted'&&isR('verifier'))?`<label>Remark</label><input id="a_r"><div class="row"><button class="btn" id="b1">Verify</button><button class="btn d" id="b2">Return</button></div>`
+ :(r.status=='verified'&&isR('approver'))?`<label>Approved cost (₱)</label><input id="a_c" type="number" inputmode="decimal"><label>Remark</label><input id="a_r"><div class="row"><button class="btn" id="b1">Approve</button><button class="btn d" id="b2">Reject</button></div>`
+ :(r.status=='approved'&&isR('engineer'))?`<label>Assigned to</label><input id="a_a"><label>Scheduled date</label><input type="date" id="a_d"><button class="btn" id="b1">Add to repair queue</button>`
+ :(r.status=='queued'&&isR('engineer'))?`<button class="btn" id="b1">Start work</button>`
+ :(r.status=='inprogress'&&isR('engineer'))?`<label>Action taken</label><input id="a_t"><div class="row"><div><label>Cost (₱)</label><input id="a_c" type="number"></div><div><label>Downtime (days)</label><input id="a_n" type="number"></div></div><button class="btn" id="b1">Mark completed</button>`
+ :(r.status=='returned'&&(role==='requester'||role==='admin'))?`<button class="btn" id="b1">Edit and resubmit</button>`:'';
+ $('#sheet').innerHTML=`<div class="row" style="align-items:center"><h3 style="margin:0;flex:3">${esc(r.name)}</h3><span class="pill ${ST[r.status][1]}" style="flex:0 0 auto">${ST[r.status][0]}</span></div><div class="mu">${esc(r.id)} · ${esc(r.tag)}</div>
+ <div class="item"><span>Department</span><b>${esc(r.dept)}</b></div><div class="item"><span>Type / priority</span><b>${esc(r.type)} · ${esc(r.priority)}</b></div><div class="item"><span>Requested by</span><b>${esc(r.by)} · ${fmt(r.date)}</b></div>
+ ${r.apCost?`<div class="item"><span>Approved cost</span><b>₱${Number(r.apCost).toLocaleString()}</b></div>`:''}${r.assigned?`<div class="item"><span>Assigned</span><b>${esc(r.assigned)}${r.sched?' · '+fmt(r.sched):''}</b></div>`:''}
+ <p><b>Problem:</b> ${esc(r.problem)}</p>${r.photo?`<img src="${r.photo}" style="width:100%;max-height:240px;object-fit:cover;border-radius:10px">`:''}
+ <b>Trail</b>${r.log.map(l=>`<div class="item"><div><b>${ST[l.status][0]}</b> · ${fmt(l.date)}<div class="mu">${esc(l.by)}${l.remark?' · '+esc(l.remark):''}</div></div></div>`).join('')}
+ ${act}<button class="btn s" id="shBtn">Notify / share</button><button class="btn s" onclick="closeM()">Close</button>`;
+ $('#modal').classList.add('on');const B=(i,fn)=>{const e=$('#'+i);if(e)e.onclick=fn};
+ B('shBtn',()=>{const t='Asset request '+r.id+': '+r.name+' ('+r.tag+') - '+r.dept+' - '+ST[r.status][0]+'. '+r.problem;navigator.share?navigator.share({title:'Asset request',text:t}).catch(()=>{}):location.href='mailto:?subject='+encodeURIComponent('Asset request '+r.id)+'&body='+encodeURIComponent(t)});
+ if(r.status=='submitted'){B('b1',()=>step(r,'verified',0,v('a_r')));B('b2',()=>step(r,'returned',0,v('a_r')))}
+ if(r.status=='verified'){B('b1',()=>step(r,'approved',{apCost:v('a_c')},v('a_r')));B('b2',()=>step(r,'rejected',0,v('a_r')))}
+ if(r.status=='approved')B('b1',()=>step(r,'queued',{assigned:v('a_a'),sched:$('#a_d').value}));
+ if(r.status=='queued')B('b1',()=>step(r,'inprogress'));
+ if(r.status=='returned')B('b1',()=>newReq(r));
+ if(r.status=='inprogress')B('b1',async()=>{const a=assets.find(x=>x.tag===r.tag);if(a){const d=today();
+   if(r.type=='PMS'){a.history=(a.history||[]).concat([{date:d,by:who(),notes:v('a_t'),cost:v('a_c')}]);a.lastPms=d}
+   else a.repairs=(a.repairs||[]).concat([{date:d,problem:r.problem,action:v('a_t'),cost:v('a_c'),days:v('a_n'),by:who()}]);await persist(a)}
+  step(r,'completed',{doneCost:v('a_c')},v('a_t'))})}
 
 if('serviceWorker' in navigator)navigator.serviceWorker.register('sw.js').catch(()=>{});
 init();
