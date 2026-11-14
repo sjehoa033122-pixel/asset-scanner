@@ -85,6 +85,7 @@ body:is([data-role=viewer],[data-role=requester],[data-role=verifier],[data-role
  <div class="card"><b>Sync phone &amp; computer</b><div class="mu">Keeps one shared copy of the inventory on every device that connects.</div><div id="syncState" class="mu" style="margin:6px 0"></div>
  <button class="btn" id="syncBtn">Set up / change sync</button><button class="btn s" id="syncOut">Sign out of sync</button></div>
  <div class="card"><b>Your name</b><div class="mu">Shown as “updated by” on assets you change.</div><input id="myName" placeholder="e.g. Afhia"></div>
+ <div class="card"><b>Backup reminder</b><div class="mu">The reminder appears only in the last 7 days before your next backup is due.</div><label>Back up every (days)</label><input id="bkDays" type="number" min="1" inputmode="numeric"></div>
  <div class="card"><b>Recycle bin</b><div class="mu">Deleted assets stay here until you remove them for good.</div><div id="binList"></div></div>
  <div class="card"><b>Barcode labels</b><label>Department</label><select id="lblDept"></select><label>Label size</label><select id="lblSize"><option value="a4">A4 sheet (3 per row)</option><option value="s">Small label 50 × 25 mm (thermal)</option><option value="l">Large label 100 × 50 mm</option></select><button class="btn s" id="prtBtn">Print barcode labels</button></div>
  <div class="printarea" id="labels" style="margin-top:12px"></div>
@@ -265,7 +266,10 @@ function deptData(){const dep={};live().forEach(a=>{const p=pms(a),k=a.loc||'(no
 const deptRows=()=>Object.entries(deptData()).sort().map(([k,d])=>[k,d.n,d.bad,d.wn,d.cost]);
 function fillSel(id,first){const el=$(id),cur=el.value,locs=[...new Set(live().map(a=>a.loc).filter(Boolean))].sort();el.innerHTML=`<option value="">${first}</option>`+locs.map(l=>`<option>${esc(l)}</option>`).join('');el.value=cur}
 function markBackup(){try{localStorage.setItem('asset-backup',Date.now())}catch(e){}banner()}
-function banner(){const t=+localStorage.getItem('asset-backup')||0,days=(Date.now()-t)/864e5;$('#banner').innerHTML=live().length&&days>7?`<div class="bn" onclick="go('rep')">Backup reminder: ${t?'last backup '+Math.floor(days)+' days ago':'no backup yet'}. Tap to export to Excel.</div>`:''}
+function banner(){const N=Math.max(1,parseInt(localStorage.getItem('asset-bkdays'))||30);let t=+localStorage.getItem('asset-backup')||0;
+ if(!t){t=+localStorage.getItem('asset-bkbase')||0;if(!t){t=Date.now();try{localStorage.setItem('asset-bkbase',t)}catch(e){}}}
+ const left=N-(Date.now()-t)/864e5;
+ $('#banner').innerHTML=live().length&&left<7?`<div class="bn" onclick="go('rep')">Backup ${left>0?'due in '+Math.ceil(left)+' day(s)':'overdue by '+Math.ceil(-left)+' day(s)'}. Tap to export to Excel.</div>`:''}
 function render(){
  const q=$('#q').value.toLowerCase(),L=live();
  const l=L.filter(a=>[a.tag,a.name,a.loc,a.cat,a.sn].join(' ').toLowerCase().includes(q)).sort((a,b)=>a.tag.localeCompare(b.tag));
@@ -292,7 +296,8 @@ $('#prtBtn').onclick=()=>{const d=$('#lblDept').value,L=live().filter(a=>!d||a.l
 $('#mailBtn').onclick=()=>{const L=live().map(a=>({a,p:pms(a)})).filter(x=>x.p.k=='bad'||x.p.k=='wn').slice(0,25);
  if(!L.length)return alert('Nothing due.');const body=L.map(x=>x.a.name+' ('+x.a.tag+') - '+(x.a.loc||'no location')+' - '+x.p.t).join('\n');
  location.href='mailto:?subject='+encodeURIComponent('PMS due / overdue list '+today())+'&body='+encodeURIComponent(body)};
-$('#myName').value=localStorage.getItem('asset-name')||'';$('#myName').oninput=e=>{try{localStorage.setItem('asset-name',e.target.value.trim())}catch(x){}};
+$('#myName').value=localStorage.getItem('asset-name')||'';$('#bkDays').value=localStorage.getItem('asset-bkdays')||30;$('#bkDays').oninput=e=>{try{localStorage.setItem('asset-bkdays',Math.max(1,parseInt(e.target.value)||30))}catch(x){}banner()};
+$('#myName').oninput=e=>{try{localStorage.setItem('asset-name',e.target.value.trim())}catch(x){}};
 const HDR=['Tag','Name','Category','Location','Brand/Model','Serial No','Date Purchased','Cost','Condition','PMS Interval (months)','Last PMS Date'];
 const HDR2=[...HDR,'Age','Next PMS Date','PMS Status'];
 const CATS=['Medical equipment','Biomedical / lab','Furniture','IT equipment','Building / utility','Vehicle','Other'];
